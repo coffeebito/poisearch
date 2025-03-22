@@ -145,25 +145,6 @@ def search_moppy(keyword):
             if parent and parent not in ad_cards:
                 ad_cards.append(parent)
         
-        # 方法2: 広告カードのクラス名で探す
-        if len(ad_cards) < 3:
-            card_elements = search_result_area.select('.item, .item-list > div, [class*="item-"], [class*="card"]')
-            for card in card_elements:
-                if card not in ad_cards and len(ad_cards) < 3:
-                    ad_cards.append(card)
-        
-        # 方法3: 広告タイトルのパターンで探す（例: 【最大〜】などの表記）
-        if len(ad_cards) < 3:
-            title_elements = search_result_area.find_all(string=re.compile(r'【.+】|最大|カード|発行|ポイント'))
-            for title_elem in title_elements:
-                parent = title_elem.parent
-                while parent and parent.name != 'a' and not (parent.name == 'div' and 'item' in parent.get('class', [])):
-                    parent = parent.parent
-                    if parent is None:
-                        break
-                
-                if parent and parent not in ad_cards and len(ad_cards) < 3:
-                    ad_cards.append(parent)
         
         # 広告カードから情報を抽出
         for card in ad_cards[:3]:  # 上位3件を取得

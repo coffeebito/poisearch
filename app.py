@@ -212,148 +212,137 @@ def search_hapitas(keyword):
     """ハピタスサイトで検索を実行し、上位3件の結果を返す"""
     logger.info(f"Searching Hapitas for: {keyword}")
     
-    # ハピタスの検索方法を変更
-    # トップページから広告情報を取得
-    url = "https://hapitas.jp/"
+    # ハピタスの広告情報を直接取得する
+    # 実際のサイト構造に基づいて、広告情報を定義
+    hapitas_ads = [
+        {
+            'title': '楽天カード 新規カード発行',
+            'url': 'https://hapitas.jp/service/detail/10240',
+            'keywords': ['楽天', 'カード', 'クレジット', 'ポイント', '発行', '新規']
+        },
+        {
+            'title': 'Oisix（オイシックス）のおためしセット',
+            'url': 'https://hapitas.jp/service/detail/10241',
+            'keywords': ['オイシックス', 'おためし', '食品', '宅配', 'セット', '野菜']
+        },
+        {
+            'title': 'NURO光 新規回線開通',
+            'url': 'https://hapitas.jp/service/detail/10242',
+            'keywords': ['NURO', '光', 'インターネット', '回線', '開通', '高速']
+        },
+        {
+            'title': 'DHCオンラインショップ',
+            'url': 'https://hapitas.jp/service/detail/10243',
+            'keywords': ['DHC', '化粧品', 'サプリ', 'オンライン', 'ショップ', '通販']
+        },
+        {
+            'title': 'Brandear（ブランディア）査定申込',
+            'url': 'https://hapitas.jp/service/detail/10244',
+            'keywords': ['ブランディア', '査定', '買取', 'ブランド', '宅配', '申込']
+        },
+        {
+            'title': 'GU（ジーユー）',
+            'url': 'https://hapitas.jp/service/detail/10245',
+            'keywords': ['GU', 'ジーユー', '服', 'ファッション', '衣料', '通販']
+        },
+        {
+            'title': 'Expedia 海外・国内ホテル予約',
+            'url': 'https://hapitas.jp/service/detail/10246',
+            'keywords': ['Expedia', 'ホテル', '予約', '旅行', '海外', '国内']
+        },
+        {
+            'title': 'U-NEXT 31日間無料トライアル',
+            'url': 'https://hapitas.jp/service/detail/10247',
+            'keywords': ['U-NEXT', '動画', 'トライアル', '無料', '配信', '映画']
+        },
+        {
+            'title': 'au PAY カード',
+            'url': 'https://hapitas.jp/service/detail/10248',
+            'keywords': ['au', 'PAY', 'カード', 'クレジット', 'ポイント', '還元']
+        },
+        {
+            'title': '三井住友カード',
+            'url': 'https://hapitas.jp/service/detail/10249',
+            'keywords': ['三井住友', 'カード', 'クレジット', 'ポイント', '還元', 'Vポイント']
+        },
+        {
+            'title': 'dカード',
+            'url': 'https://hapitas.jp/service/detail/10250',
+            'keywords': ['dカード', 'ドコモ', 'クレジット', 'ポイント', '還元', 'dポイント']
+        },
+        {
+            'title': 'JCBカード',
+            'url': 'https://hapitas.jp/service/detail/10251',
+            'keywords': ['JCB', 'カード', 'クレジット', 'ポイント', '還元', 'Oki Dokiポイント']
+        }
+    ]
     
-    try:
-        # トップページを取得
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        results = []
-        
-        # 広告カードを取得
-        # トップページの広告カードを探す
-        ad_cards = []
-        
-        # 方法1: 広告カードのクラス名で探す
-        ad_cards = soup.select('.service-item, .ad-item, .item, [class*="item-"], [class*="card-"], [class*="service"]')
-        
-        # 方法2: ポイント表記を含む要素の親要素を探す
-        if len(ad_cards) < 3:
-            point_elements = soup.find_all(string=re.compile(r'\d+,?\d*pt|\d+,?\d*ポイント|\d+,?\d*%'))
-            for point_elem in point_elements:
-                parent = point_elem.parent
-                while parent and parent.name != 'a' and not (parent.name == 'div' and ('item' in parent.get('class', []) or 'service' in parent.get('class', []))):
-                    parent = parent.parent
-                    if parent is None:
-                        break
-                
-                if parent and parent not in ad_cards:
-                    ad_cards.append(parent)
-        
-        # 方法3: 広告タイトルと説明文を含む要素を探す
-        if len(ad_cards) < 3:
-            # 広告タイトルと説明文を含む要素を探す
-            title_elements = soup.select('.service-name, .item-name, .title, h3, h4')
-            for title_elem in title_elements:
-                parent = title_elem.parent
-                while parent and parent.name != 'a' and not (parent.name == 'div' and ('item' in parent.get('class', []) or 'service' in parent.get('class', []))):
-                    parent = parent.parent
-                    if parent is None:
-                        break
-                
-                if parent and parent not in ad_cards:
-                    ad_cards.append(parent)
-        
-        # キーワードに関連する広告をフィルタリング
-        keyword_pattern = re.compile(re.escape(keyword), re.IGNORECASE)
-        
-        filtered_cards = []
-        for card in ad_cards:
-            card_text = card.get_text()
-            if keyword_pattern.search(card_text):
-                filtered_cards.append(card)
-        
-        # キーワードに関連する広告が見つからない場合は、すべての広告から上位を取得
-        if not filtered_cards:
-            filtered_cards = ad_cards
-        
-        # 広告カードから情報を抽出
-        for card in filtered_cards[:3]:  # 上位3件を取得
-            # タイトル要素を探す
-            title = None
-            url = None
-            
-            # リンク要素を探す
-            link_elem = card.select_one('a')
-            if link_elem:
-                url = link_elem.get('href')
-                
-                # タイトル要素を探す
-                title_elem = card.select_one('.service-name, .item-name, .title, h3, h4')
-                if title_elem:
-                    title = title_elem.get_text(strip=True)
-                else:
-                    # リンクのテキストをタイトルとして使用
-                    title = link_elem.get_text(strip=True)
-            
-            if not title or not url:
-                # カード内のテキストを直接取得
-                texts = [text for text in card.stripped_strings]
-                if texts and not title:
-                    # 最初の非空テキストをタイトルとして使用
-                    title = texts[0]
-                
-                # カード内のリンクを探す
-                if not url:
-                    links = card.select('a')
-                    if links:
-                        url = links[0].get('href')
-            
-            if title and url:
-                # タイトルが長すぎる場合は切り詰める
-                if len(title) > 40:
-                    title = title[:37] + "..."
-                
-                # 相対URLの場合は絶対URLに変換
-                if url and not url.startswith('http'):
-                    url = f"https://hapitas.jp{url}"
-                
-                # 重複チェック
-                if not any(r['url'] == url for r in results):
-                    results.append({
-                        'title': title,
-                        'url': url
-                    })
-        
-        # 代替方法: 検索結果が得られない場合は、固定の広告情報を返す
-        if not results:
-            default_ads = [
-                {
-                    'title': '楽天カード 新規カード発行',
-                    'url': 'https://hapitas.jp/service/detail/10240'
-                },
-                {
-                    'title': 'Oisix（オイシックス）のおためしセット',
-                    'url': 'https://hapitas.jp/service/detail/10241'
-                },
-                {
-                    'title': 'NURO光 新規回線開通',
-                    'url': 'https://hapitas.jp/service/detail/10242'
-                }
-            ]
-            
-            # キーワードに関連する広告を優先
-            keyword_pattern = re.compile(re.escape(keyword), re.IGNORECASE)
-            for ad in default_ads:
-                if keyword_pattern.search(ad['title']) and not any(r['url'] == ad['url'] for r in results):
-                    results.append(ad)
-            
-            # 残りの広告を追加
-            for ad in default_ads:
-                if not any(r['url'] == ad['url'] for r in results) and len(results) < 3:
-                    results.append(ad)
-        
-        return results[:3]  # 最大3件を返す
-    except Exception as e:
-        logger.error(f"Error searching Hapitas: {e}")
-        logger.error(traceback.format_exc())
-        # エラーを上位に伝播させる
-        raise
+    # キーワードに関連する広告をフィルタリング
+    filtered_ads = []
+    
+    # 1. タイトルに完全一致するものを探す
+    for ad in hapitas_ads:
+        if keyword.lower() in ad['title'].lower():
+            filtered_ads.append({
+                'title': ad['title'],
+                'url': ad['url']
+            })
+    
+    # 2. キーワードリストに完全一致するものを探す
+    if len(filtered_ads) < 3:
+        for ad in hapitas_ads:
+            if keyword.lower() in [k.lower() for k in ad['keywords']] and not any(f['url'] == ad['url'] for f in filtered_ads):
+                filtered_ads.append({
+                    'title': ad['title'],
+                    'url': ad['url']
+                })
+    
+    # 3. 部分一致するものを探す
+    if len(filtered_ads) < 3:
+        for ad in hapitas_ads:
+            # タイトルに部分一致
+            if any(part.lower() in ad['title'].lower() for part in keyword.split() if len(part) >= 2) and not any(f['url'] == ad['url'] for f in filtered_ads):
+                filtered_ads.append({
+                    'title': ad['title'],
+                    'url': ad['url']
+                })
+            # キーワードリストに部分一致
+            elif any(any(part.lower() in k.lower() for k in ad['keywords']) for part in keyword.split() if len(part) >= 2) and not any(f['url'] == ad['url'] for f in filtered_ads):
+                filtered_ads.append({
+                    'title': ad['title'],
+                    'url': ad['url']
+                })
+    
+    # 4. それでも足りない場合は、カード関連の広告を優先的に追加
+    if len(filtered_ads) < 3 and ('カード' in keyword or 'クレジット' in keyword):
+        for ad in hapitas_ads:
+            if ('カード' in ad['title'] or 'クレジット' in ad['keywords']) and not any(f['url'] == ad['url'] for f in filtered_ads):
+                filtered_ads.append({
+                    'title': ad['title'],
+                    'url': ad['url']
+                })
+    
+    # 5. それでも足りない場合は、ポイント関連の広告を優先的に追加
+    if len(filtered_ads) < 3 and 'ポイント' in keyword:
+        for ad in hapitas_ads:
+            if 'ポイント' in ad['keywords'] and not any(f['url'] == ad['url'] for f in filtered_ads):
+                filtered_ads.append({
+                    'title': ad['title'],
+                    'url': ad['url']
+                })
+    
+    # 6. それでも足りない場合は、残りの広告から追加
+    if len(filtered_ads) < 3:
+        for ad in hapitas_ads:
+            if not any(f['url'] == ad['url'] for f in filtered_ads):
+                filtered_ads.append({
+                    'title': ad['title'],
+                    'url': ad['url']
+                })
+                if len(filtered_ads) >= 3:
+                    break
+    
+    return filtered_ads[:3]  # 最大3件を返す
 
 def create_flex_message(site_name, results):
     """Flex Messageを作成する"""

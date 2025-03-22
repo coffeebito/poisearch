@@ -118,22 +118,65 @@ def search_moppy(keyword):
         soup = BeautifulSoup(response.text, 'html.parser')
         
         results = []
-        # 検索結果の広告カードを取得
-        ad_cards = soup.select('.search-result-list > a, .search-result-list > div > a')[:3]  # 上位3件を取得
         
-        for card in ad_cards:
-            # タイトル要素を取得
-            title_elem = card.select_one('.item-name, .item-title')
-            if not title_elem:
-                # タイトル要素が見つからない場合はテキスト全体を使用
-                title = card.text.strip()
-            else:
+        # 検索結果の広告カードを取得（修正済み）
+        # 実際のサイト構造に基づいて、広告カードのセレクタを指定
+        ad_cards = []
+        
+        # 検索結果ページの広告カードを取得
+        # 各広告カードは独立した要素として表示されている
+        ad_containers = soup.select('.search-result .item-list > div')
+        if not ad_containers:
+            # 別のセレクタも試す
+            ad_containers = soup.select('.search-result-list > div')
+        
+        if not ad_containers:
+            # さらに別のセレクタも試す
+            ad_containers = soup.select('[class*="item"]')
+        
+        # 広告カードから情報を抽出
+        for container in ad_containers[:3]:  # 上位3件を取得
+            title_elem = None
+            link_elem = None
+            
+            # タイトル要素を探す
+            title_candidates = container.select('.item-name, .item-title, h3, [class*="title"]')
+            if title_candidates:
+                title_elem = title_candidates[0]
+            
+            # リンク要素を探す
+            link_candidates = container.select('a')
+            if link_candidates:
+                link_elem = link_candidates[0]
+            elif container.name == 'a':
+                link_elem = container
+            
+            # タイトルとリンクが見つかった場合、結果に追加
+            if title_elem and link_elem:
                 title = title_elem.text.strip()
-            
-            # URLを取得
-            link = card.get('href')
-            
-            if title and link:
+                link = link_elem.get('href')
+                
+                # タイトルが長すぎる場合は切り詰める
+                if len(title) > 40:
+                    title = title[:37] + "..."
+                
+                # 相対URLの場合は絶対URLに変換
+                if link and not link.startswith('http'):
+                    link = f"https://pc.moppy.jp{link}"
+                
+                results.append({
+                    'title': title,
+                    'url': link
+                })
+            # タイトル要素が見つからない場合でも、リンク要素があればその内容を使用
+            elif link_elem:
+                title = link_elem.text.strip()
+                link = link_elem.get('href')
+                
+                # 空のタイトルの場合はスキップ
+                if not title:
+                    continue
+                
                 # タイトルが長すぎる場合は切り詰める
                 if len(title) > 40:
                     title = title[:37] + "..."
@@ -147,7 +190,40 @@ def search_moppy(keyword):
                     'url': link
                 })
         
-        return results
+        # 結果が3件未満の場合、別の方法でも検索
+        if len(results) < 3:
+            # 直接広告リンクを探す
+            ad_links = soup.select('a[href*="/ad/"]')
+            
+            for link in ad_links:
+                if len(results) >= 3:
+                    break
+                
+                title = link.text.strip()
+                url = link.get('href')
+                
+                # 既に結果に含まれているURLはスキップ
+                if any(r['url'] == url for r in results):
+                    continue
+                
+                # 空のタイトルの場合はスキップ
+                if not title:
+                    continue
+                
+                # タイトルが長すぎる場合は切り詰める
+                if len(title) > 40:
+                    title = title[:37] + "..."
+                
+                # 相対URLの場合は絶対URLに変換
+                if url and not url.startswith('http'):
+                    url = f"https://pc.moppy.jp{url}"
+                
+                results.append({
+                    'title': title,
+                    'url': url
+                })
+        
+        return results[:3]  # 最大3件を返す
     except Exception as e:
         logger.error(f"Error searching Moppy: {e}")
         logger.error(traceback.format_exc())
@@ -169,22 +245,45 @@ def search_hapitas(keyword):
         soup = BeautifulSoup(response.text, 'html.parser')
         
         results = []
-        # 検索結果の広告リンクを取得
-        ad_links = soup.select('a[href*="/itemDetail/"]')[:3]  # 上位3件を取得
         
-        for link in ad_links:
+        # 検索結果の広告リンクを取得（修正済み）
+        # 複数のセレクタを試す
+        ad_links = []
+        
+        # まず、itemDetailへのリンクを探す
+        ad_links = soup.select('a[href*="/itemDetail/"]')
+        
+        # 結果がない場合は別のセレクタを試す
+        if not ad_links:
+            ad_links = soup.select('.item-list a, .search-result a')
+        
+        # それでも結果がない場合は、すべてのリンクから広告っぽいものを探す
+        if not ad_links:
+            all_links = soup.select('a')
+            for link in all_links:
+                href = link.get('href', '')
+                # 広告リンクっぽいものを選択
+                if '/item/' in href or '/ad/' in href or '/campaign/' in href:
+                    ad_links.append(link)
+        
+        # 広告リンクから情報を抽出
+        for link in ad_links[:3]:  # 上位3件を取得
             # タイトルを取得
             title = link.text.strip()
             # URLを取得
             url = link.get('href')
             
-            if title and url:
-                # タイトルが長すぎる場合は切り詰める
-                if len(title) > 40:
-                    title = title[:37] + "..."
-                
+            # 空のタイトルの場合はスキップ
+            if not title:
+                continue
+            
+            # タイトルが長すぎる場合は切り詰める
+            if len(title) > 40:
+                title = title[:37] + "..."
+            
+            if url:
                 # 相対URLの場合は絶対URLに変換
-                if url and not url.startswith('http'):
+                if not url.startswith('http'):
                     url = f"https://sp.hapitas.jp{url}"
                 
                 results.append({
@@ -192,7 +291,7 @@ def search_hapitas(keyword):
                     'url': url
                 })
         
-        return results
+        return results[:3]  # 最大3件を返す
     except Exception as e:
         logger.error(f"Error searching Hapitas: {e}")
         logger.error(traceback.format_exc())

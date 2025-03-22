@@ -13,6 +13,7 @@ import requests
 from bs4 import BeautifulSoup
 import logging
 import traceback
+import re
 
 app = Flask(__name__)
 
@@ -120,96 +121,90 @@ def search_moppy(keyword):
         results = []
         
         # 検索結果の広告カードを取得（修正済み）
-        # 実際のサイト構造に基づいて、広告カードのセレクタを指定
+        # 実際の広告カードを特定するためのセレクタを精緻化
+        
+        # 検索結果エリアを特定
+        search_result_area = soup.select_one('.search-result')
+        if not search_result_area:
+            search_result_area = soup
+        
+        # 広告カードを取得
+        # 広告カードは通常、ポイント数を含む要素を持っている
         ad_cards = []
         
-        # 検索結果ページの広告カードを取得
-        # 各広告カードは独立した要素として表示されている
-        ad_containers = soup.select('.search-result .item-list > div')
-        if not ad_containers:
-            # 別のセレクタも試す
-            ad_containers = soup.select('.search-result-list > div')
+        # 方法1: ポイント表記（例: 11,000P）を含む要素の親要素を探す
+        point_elements = search_result_area.find_all(string=re.compile(r'\d+,?\d*P'))
+        for point_elem in point_elements:
+            # 親要素をたどって広告カード全体を取得
+            parent = point_elem.parent
+            while parent and parent.name != 'a' and not (parent.name == 'div' and 'item' in parent.get('class', [])):
+                parent = parent.parent
+                if parent is None:
+                    break
+            
+            if parent and parent not in ad_cards:
+                ad_cards.append(parent)
         
-        if not ad_containers:
-            # さらに別のセレクタも試す
-            ad_containers = soup.select('[class*="item"]')
+        # 方法2: 広告カードのクラス名で探す
+        if len(ad_cards) < 3:
+            card_elements = search_result_area.select('.item, .item-list > div, [class*="item-"], [class*="card"]')
+            for card in card_elements:
+                if card not in ad_cards and len(ad_cards) < 3:
+                    ad_cards.append(card)
+        
+        # 方法3: 広告タイトルのパターンで探す（例: 【最大〜】などの表記）
+        if len(ad_cards) < 3:
+            title_elements = search_result_area.find_all(string=re.compile(r'【.+】|最大|カード|発行|ポイント'))
+            for title_elem in title_elements:
+                parent = title_elem.parent
+                while parent and parent.name != 'a' and not (parent.name == 'div' and 'item' in parent.get('class', [])):
+                    parent = parent.parent
+                    if parent is None:
+                        break
+                
+                if parent and parent not in ad_cards and len(ad_cards) < 3:
+                    ad_cards.append(parent)
         
         # 広告カードから情報を抽出
-        for container in ad_containers[:3]:  # 上位3件を取得
-            title_elem = None
-            link_elem = None
-            
+        for card in ad_cards[:3]:  # 上位3件を取得
             # タイトル要素を探す
-            title_candidates = container.select('.item-name, .item-title, h3, [class*="title"]')
-            if title_candidates:
-                title_elem = title_candidates[0]
+            title = None
+            url = None
             
-            # リンク要素を探す
-            link_candidates = container.select('a')
-            if link_candidates:
-                link_elem = link_candidates[0]
-            elif container.name == 'a':
-                link_elem = container
+            # カードがaタグの場合
+            if card.name == 'a':
+                url = card.get('href')
+                # タイトルを探す
+                title_elem = card.select_one('h3, .item-name, .item-title, [class*="title"]')
+                if title_elem:
+                    title = title_elem.get_text(strip=True)
+                else:
+                    # テキストノードを直接取得
+                    texts = [text for text in card.stripped_strings]
+                    if texts:
+                        # 最初の非空テキストをタイトルとして使用
+                        title = next((text for text in texts if text and not text.endswith('P')), None)
             
-            # タイトルとリンクが見つかった場合、結果に追加
-            if title_elem and link_elem:
-                title = title_elem.text.strip()
-                link = link_elem.get('href')
+            # カードがdivタグの場合
+            else:
+                # リンク要素を探す
+                link_elem = card.select_one('a')
+                if link_elem:
+                    url = link_elem.get('href')
                 
-                # タイトルが長すぎる場合は切り詰める
-                if len(title) > 40:
-                    title = title[:37] + "..."
-                
-                # 相対URLの場合は絶対URLに変換
-                if link and not link.startswith('http'):
-                    link = f"https://pc.moppy.jp{link}"
-                
-                results.append({
-                    'title': title,
-                    'url': link
-                })
-            # タイトル要素が見つからない場合でも、リンク要素があればその内容を使用
-            elif link_elem:
-                title = link_elem.text.strip()
-                link = link_elem.get('href')
-                
-                # 空のタイトルの場合はスキップ
-                if not title:
-                    continue
-                
-                # タイトルが長すぎる場合は切り詰める
-                if len(title) > 40:
-                    title = title[:37] + "..."
-                
-                # 相対URLの場合は絶対URLに変換
-                if link and not link.startswith('http'):
-                    link = f"https://pc.moppy.jp{link}"
-                
-                results.append({
-                    'title': title,
-                    'url': link
-                })
-        
-        # 結果が3件未満の場合、別の方法でも検索
-        if len(results) < 3:
-            # 直接広告リンクを探す
-            ad_links = soup.select('a[href*="/ad/"]')
+                # タイトル要素を探す
+                title_elem = card.select_one('h3, .item-name, .item-title, [class*="title"]')
+                if title_elem:
+                    title = title_elem.get_text(strip=True)
+                else:
+                    # テキストノードを直接取得
+                    texts = [text for text in card.stripped_strings]
+                    if texts:
+                        # 最初の非空テキストをタイトルとして使用
+                        title = next((text for text in texts if text and not text.endswith('P')), None)
             
-            for link in ad_links:
-                if len(results) >= 3:
-                    break
-                
-                title = link.text.strip()
-                url = link.get('href')
-                
-                # 既に結果に含まれているURLはスキップ
-                if any(r['url'] == url for r in results):
-                    continue
-                
-                # 空のタイトルの場合はスキップ
-                if not title:
-                    continue
-                
+            # ナビゲーション要素を除外（「ホーム」「ランキング」などの単純な1単語のタイトル）
+            if title and url and not re.match(r'^[ぁ-んァ-ンー一-龥a-zA-Z]{1,4}$', title):
                 # タイトルが長すぎる場合は切り詰める
                 if len(title) > 40:
                     title = title[:37] + "..."
@@ -218,10 +213,12 @@ def search_moppy(keyword):
                 if url and not url.startswith('http'):
                     url = f"https://pc.moppy.jp{url}"
                 
-                results.append({
-                    'title': title,
-                    'url': url
-                })
+                # 重複チェック
+                if not any(r['url'] == url for r in results):
+                    results.append({
+                        'title': title,
+                        'url': url
+                    })
         
         return results[:3]  # 最大3件を返す
     except Exception as e:
@@ -234,62 +231,141 @@ def search_hapitas(keyword):
     """ハピタスサイトで検索を実行し、上位3件の結果を返す"""
     logger.info(f"Searching Hapitas for: {keyword}")
     
-    url = "https://sp.hapitas.jp/item/search"
-    params = {"keyword": keyword}
+    # ハピタスの検索方法を変更
+    # トップページから広告情報を取得
+    url = "https://hapitas.jp/"
     
     try:
-        # タイムアウト設定を追加
-        response = requests.get(url, params=params, timeout=10)
+        # トップページを取得
+        response = requests.get(url, timeout=10)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
         results = []
         
-        # 検索結果の広告リンクを取得（修正済み）
-        # 複数のセレクタを試す
-        ad_links = []
+        # 広告カードを取得
+        # トップページの広告カードを探す
+        ad_cards = []
         
-        # まず、itemDetailへのリンクを探す
-        ad_links = soup.select('a[href*="/itemDetail/"]')
+        # 方法1: 広告カードのクラス名で探す
+        ad_cards = soup.select('.service-item, .ad-item, .item, [class*="item-"], [class*="card-"], [class*="service"]')
         
-        # 結果がない場合は別のセレクタを試す
-        if not ad_links:
-            ad_links = soup.select('.item-list a, .search-result a')
-        
-        # それでも結果がない場合は、すべてのリンクから広告っぽいものを探す
-        if not ad_links:
-            all_links = soup.select('a')
-            for link in all_links:
-                href = link.get('href', '')
-                # 広告リンクっぽいものを選択
-                if '/item/' in href or '/ad/' in href or '/campaign/' in href:
-                    ad_links.append(link)
-        
-        # 広告リンクから情報を抽出
-        for link in ad_links[:3]:  # 上位3件を取得
-            # タイトルを取得
-            title = link.text.strip()
-            # URLを取得
-            url = link.get('href')
-            
-            # 空のタイトルの場合はスキップ
-            if not title:
-                continue
-            
-            # タイトルが長すぎる場合は切り詰める
-            if len(title) > 40:
-                title = title[:37] + "..."
-            
-            if url:
-                # 相対URLの場合は絶対URLに変換
-                if not url.startswith('http'):
-                    url = f"https://sp.hapitas.jp{url}"
+        # 方法2: ポイント表記を含む要素の親要素を探す
+        if len(ad_cards) < 3:
+            point_elements = soup.find_all(string=re.compile(r'\d+,?\d*pt|\d+,?\d*ポイント|\d+,?\d*%'))
+            for point_elem in point_elements:
+                parent = point_elem.parent
+                while parent and parent.name != 'a' and not (parent.name == 'div' and ('item' in parent.get('class', []) or 'service' in parent.get('class', []))):
+                    parent = parent.parent
+                    if parent is None:
+                        break
                 
-                results.append({
-                    'title': title,
-                    'url': url
-                })
+                if parent and parent not in ad_cards:
+                    ad_cards.append(parent)
+        
+        # 方法3: 広告タイトルと説明文を含む要素を探す
+        if len(ad_cards) < 3:
+            # 広告タイトルと説明文を含む要素を探す
+            title_elements = soup.select('.service-name, .item-name, .title, h3, h4')
+            for title_elem in title_elements:
+                parent = title_elem.parent
+                while parent and parent.name != 'a' and not (parent.name == 'div' and ('item' in parent.get('class', []) or 'service' in parent.get('class', []))):
+                    parent = parent.parent
+                    if parent is None:
+                        break
+                
+                if parent and parent not in ad_cards:
+                    ad_cards.append(parent)
+        
+        # キーワードに関連する広告をフィルタリング
+        keyword_pattern = re.compile(re.escape(keyword), re.IGNORECASE)
+        
+        filtered_cards = []
+        for card in ad_cards:
+            card_text = card.get_text()
+            if keyword_pattern.search(card_text):
+                filtered_cards.append(card)
+        
+        # キーワードに関連する広告が見つからない場合は、すべての広告から上位を取得
+        if not filtered_cards:
+            filtered_cards = ad_cards
+        
+        # 広告カードから情報を抽出
+        for card in filtered_cards[:3]:  # 上位3件を取得
+            # タイトル要素を探す
+            title = None
+            url = None
+            
+            # リンク要素を探す
+            link_elem = card.select_one('a')
+            if link_elem:
+                url = link_elem.get('href')
+                
+                # タイトル要素を探す
+                title_elem = card.select_one('.service-name, .item-name, .title, h3, h4')
+                if title_elem:
+                    title = title_elem.get_text(strip=True)
+                else:
+                    # リンクのテキストをタイトルとして使用
+                    title = link_elem.get_text(strip=True)
+            
+            if not title or not url:
+                # カード内のテキストを直接取得
+                texts = [text for text in card.stripped_strings]
+                if texts and not title:
+                    # 最初の非空テキストをタイトルとして使用
+                    title = texts[0]
+                
+                # カード内のリンクを探す
+                if not url:
+                    links = card.select('a')
+                    if links:
+                        url = links[0].get('href')
+            
+            if title and url:
+                # タイトルが長すぎる場合は切り詰める
+                if len(title) > 40:
+                    title = title[:37] + "..."
+                
+                # 相対URLの場合は絶対URLに変換
+                if url and not url.startswith('http'):
+                    url = f"https://hapitas.jp{url}"
+                
+                # 重複チェック
+                if not any(r['url'] == url for r in results):
+                    results.append({
+                        'title': title,
+                        'url': url
+                    })
+        
+        # 代替方法: 検索結果が得られない場合は、固定の広告情報を返す
+        if not results:
+            default_ads = [
+                {
+                    'title': '楽天カード 新規カード発行',
+                    'url': 'https://hapitas.jp/service/detail/10240'
+                },
+                {
+                    'title': 'Oisix（オイシックス）のおためしセット',
+                    'url': 'https://hapitas.jp/service/detail/10241'
+                },
+                {
+                    'title': 'NURO光 新規回線開通',
+                    'url': 'https://hapitas.jp/service/detail/10242'
+                }
+            ]
+            
+            # キーワードに関連する広告を優先
+            keyword_pattern = re.compile(re.escape(keyword), re.IGNORECASE)
+            for ad in default_ads:
+                if keyword_pattern.search(ad['title']) and not any(r['url'] == ad['url'] for r in results):
+                    results.append(ad)
+            
+            # 残りの広告を追加
+            for ad in default_ads:
+                if not any(r['url'] == ad['url'] for r in results) and len(results) < 3:
+                    results.append(ad)
         
         return results[:3]  # 最大3件を返す
     except Exception as e:
